@@ -2,10 +2,14 @@ name: Build installers
 
 # - Pull requests and manual runs: build everything and attach the installers
 #   to the workflow run (Actions tab → run → Artifacts).
-# - Pushing a tag like v0.2.0: also creates a draft GitHub Release with every
-#   installer attached. Review it, then click Publish.
+# - Pushing to main with a new "version" in package.json: tags that commit
+#   (e.g. v0.2.0) and creates a draft GitHub Release with every installer
+#   attached. Review it, then click Publish. Pushes to main that don't change
+#   the version build nothing.
+# - Pushing a tag like v0.2.0 by hand also creates a draft release.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -13,14 +17,47 @@ on:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a release build halfway; only superseded PR builds.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write # needed to create the release on tag pushes
+  contents: write # needed to push the tag and create the release
 
 jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Decides which release (if any) this run produces:
+      # - tag push: that tag
+      # - push to main: v<package.json version>, if that tag doesn't exist yet
+      # - anything else: none (build only)
+      - name: Tag new version
+        id: tag
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="v$(node -p "require('./package.json').version")"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "$tag already exists; nothing to release."
+            else
+              git tag "$tag"
+              git push origin "$tag"
+              echo "Tagged $GITHUB_SHA as $tag."
+              echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   build:
     name: ${{ matrix.name }}
+    needs: version
+    # Pushes to main only build when they produce a release.
+    if: github.event_name != 'push' || needs.version.outputs.tag != ''
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +77,8 @@ jobs:
             rust-targets: ""
             args: ""
     runs-on: ${{ matrix.runner }}
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +118,7 @@ jobs:
         run: |
           if [ -n "$KEY" ]; then
             echo "args=--config src-tauri/tauri.release.conf.json" >> "$GITHUB_OUTPUT"
-          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+          elif [ -n "$RELEASE_TAG" ]; then
             echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is missing; a release without it can't auto-update."
             exit 1
           else
@@ -94,9 +133,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }} ${{ steps.updater.outputs.args }}
-          # Only tag pushes create a (draft) release; other runs just build.
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: Tidepool ${{ github.ref_name }}
+          # Only release runs create a (draft) release; other runs just build.
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Tidepool ${{ env.RELEASE_TAG }}
           releaseBody: See the README for install instructions.
           releaseDraft: true
           uploadWorkflowArtifacts: true

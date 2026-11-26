@@ -67,13 +67,12 @@ Tidepool checks for a new version when it starts and every few hours while it's 
 
 ## Releasing a new version
 
-1. Bump `version` in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`.
-2. Commit, then tag and push:
-   ```bash
-   git tag v0.2.0 && git push origin v0.2.0
-   ```
-3. GitHub Actions builds every installer, signs the update files and creates a **draft** release with them attached. Check it on the Releases page, then click **Publish**.
+1. Bump `version` in `package.json` (for example `npm version minor --no-git-tag-version`). The app reads its version from there.
+2. Commit and push to `main`.
+3. GitHub Actions sees the new version, tags the commit (for example `v0.2.0`), builds every installer, signs the update files and creates a **draft** release with them attached. Check it on the Releases page, then click **Publish**.
    Installed apps only see the update once the release is published, because drafts aren't served as "latest".
+
+Pushes to `main` that don't change the version don't build anything. Pull requests and manual runs still build the installers, but don't release them.
 
 ### Update signing key (one-time setup)
 

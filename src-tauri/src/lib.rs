@@ -24,6 +24,10 @@ fn install_kind() -> &'static str {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The MQTT client and the updater share rustls; pick its crypto backend
+    // explicitly so TLS never has to guess (it panics if it's ambiguous).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())

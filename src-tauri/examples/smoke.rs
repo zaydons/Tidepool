@@ -4,6 +4,7 @@ use std::time::Duration;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let args: Vec<String> = std::env::args().collect();
     let host = args.get(1).cloned().unwrap_or("test.mosquitto.org".into());
     let port: u16 = args.get(2).and_then(|p| p.parse().ok()).unwrap_or(1883);
