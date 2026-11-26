@@ -7,9 +7,10 @@ interface Props {
   onChange: (list: ConnectionProfile[]) => void;
   onConnect: (p: ConnectionProfile) => void;
   error?: string;
+  footer?: React.ReactNode;
 }
 
-export function ConnectionForm({ profiles, onChange, onConnect, error }: Props) {
+export function ConnectionForm({ profiles, onChange, onConnect, error, footer }: Props) {
   const [selectedId, setSelectedId] = useState<string>(profiles[0]?.id ?? "");
   const [draft, setDraft] = useState<ConnectionProfile>(
     () => profiles.find((p) => p.id === selectedId) ?? newProfile(),
@@ -72,6 +73,8 @@ export function ConnectionForm({ profiles, onChange, onConnect, error }: Props) 
             </span>
           </button>
         ))}
+        <div className="grow" />
+        {footer}
       </aside>
 
       <form className="connect-form" onSubmit={connect}>

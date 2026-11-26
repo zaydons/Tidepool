@@ -1,0 +1,102 @@
+name: Build installers
+
+# - Pull requests and manual runs: build everything and attach the installers
+#   to the workflow run (Actions tab → run → Artifacts).
+# - Pushing a tag like v0.2.0: also creates a draft GitHub Release with every
+#   installer attached. Review it, then click Publish.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # needed to create the release on tag pushes
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon + Intel)
+            runner: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          # Ubuntu 22.04 is deliberately old: binaries built against its glibc
+          # run on 22.04 and newer distros (Mint 21+, Debian 12+, Fedora 36+...).
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            rust-targets: ""
+            args: ""
+          - name: Linux ARM64
+            runner: ubuntu-22.04-arm
+            rust-targets: ""
+            args: ""
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.runner }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Auto-update files (signed bundles + latest.json) need the signing key.
+      # Releases must have it; other runs build without update files if the
+      # secret isn't available (e.g. pull requests from forks).
+      - name: Check updater signing key
+        id: updater
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "args=--config src-tauri/tauri.release.conf.json" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is missing; a release without it can't auto-update."
+            exit 1
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set; building without auto-update files."
+          fi
+
+      - name: Build installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.args }} ${{ steps.updater.outputs.args }}
+          # Only tag pushes create a (draft) release; other runs just build.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: Tidepool ${{ github.ref_name }}
+          releaseBody: See the README for install instructions.
+          releaseDraft: true
+          uploadWorkflowArtifacts: true

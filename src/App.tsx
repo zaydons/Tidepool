@@ -8,6 +8,8 @@ import { ConnectionForm } from "./components/ConnectionForm";
 import { TopicTree } from "./components/TopicTree";
 import { TopicDetail } from "./components/TopicDetail";
 import { PublishPanel, type PublishDraft } from "./components/PublishPanel";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { useUpdates } from "./updates";
 import "./styles.css";
 
 export default function App() {
@@ -15,6 +17,7 @@ export default function App() {
   const [active, setActive] = useState<ConnectionProfile | null>(null);
   const [status, setStatus] = useState<ConnStatus>({ state: "idle" });
   const [connectError, setConnectError] = useState<string>();
+  const updates = useUpdates();
 
   const rootRef = useRef<TopicNode>(createNode("", ""));
   const [, setVersion] = useState(0);
@@ -145,7 +148,23 @@ export default function App() {
 
   if (!active) {
     return (
-      <ConnectionForm profiles={profiles} onChange={updateProfiles} onConnect={connect} error={connectError} />
+      <div className="shell">
+        <UpdateBanner updates={updates} />
+        <ConnectionForm
+          profiles={profiles}
+          onChange={updateProfiles}
+          onConnect={connect}
+          error={connectError}
+          footer={
+            <div className="sidebar-footer muted small">
+              <span>Tidepool {updates.currentVersion}</span>
+              <button className="ghost small" onClick={() => updates.checkNow(true)}>
+                Check for updates
+              </button>
+            </div>
+          }
+        />
+      </div>
     );
   }
 
@@ -154,6 +173,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <UpdateBanner updates={updates} />
       <header className="topbar">
         <div className="conn-info">
           <StatusDot status={status} />

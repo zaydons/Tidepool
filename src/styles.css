@@ -206,3 +206,19 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
 }
 .publish h3 { margin: 0; }
 .publish textarea { font-family: var(--mono); font-size: 12.5px; }
+
+/* ---------- Updates ---------- */
+.shell { display: flex; flex-direction: column; height: 100%; }
+.shell > .connect-screen { flex: 1; min-height: 0; height: auto; }
+.update-bar {
+  display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: 12.5px;
+  background: var(--panel-2); border-bottom: 1px solid var(--border);
+}
+.update-bar.accent { background: var(--accent-soft); }
+.update-bar.warn { color: var(--warn); }
+.progress { flex: 1; max-width: 240px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+.sidebar-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 6px 8px 12px; border-top: 1px solid var(--border);
+}

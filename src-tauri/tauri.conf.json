@@ -32,6 +32,34 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "Sal Zaydon",
+    "copyright": "© 2026 Sal Zaydon. MIT License.",
+    "category": "DeveloperTool",
+    "shortDescription": "Cross-platform MQTT explorer",
+    "longDescription": "Tidepool connects to an MQTT broker and shows a live topic tree, message history and payloads, and lets you publish messages.",
+    "homepage": "https://github.com/zaydons/Tidepool",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "section": "devel"
+      },
+      "rpm": {
+        "release": "1"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFRDNENDVBNTY4ODVFQjcKUldTM1hvaFdXdFRUem1UZS9iZDhMRXUzOGd0YlBQWGVoUGJzTU00UkhxeHFwMlVLREU4V3A0Q0IK",
+      "endpoints": [
+        "https://github.com/zaydons/Tidepool/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
