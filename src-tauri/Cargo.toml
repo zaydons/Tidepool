@@ -28,7 +28,8 @@ rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio = { version = "1", features = ["time", "sync", "macros"] }
 base64 = "0.22"
-tauri-plugin-updater = "2"
+# Without the "zip" feature: zip is only used for Windows updates, which Tidepool doesn't ship.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-process = "2"
 tauri-plugin-opener = "2"
 
