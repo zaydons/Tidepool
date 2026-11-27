@@ -1,4 +1,6 @@
 mod mqtt;
+mod secrets;
+pub mod tls;
 
 /// How this copy of the app was installed, which decides how it can update:
 /// - "macos" / "appimage" / "windows": the built-in updater can replace the app in place.
@@ -22,6 +24,14 @@ fn install_kind() -> &'static str {
     }
 }
 
+/// Writes an export to the path the user picked in the save dialog.
+#[tauri::command]
+async fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|e| format!("Couldn't save {path}: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // The MQTT client and the updater share rustls; pick its crypto backend
@@ -32,13 +42,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(mqtt::MqttState::default())
         .invoke_handler(tauri::generate_handler![
             install_kind,
+            save_text_file,
             mqtt::mqtt_connect,
             mqtt::mqtt_disconnect,
             mqtt::mqtt_publish,
             mqtt::mqtt_subscribe,
+            secrets::secret_get,
+            secrets::secret_set,
+            secrets::secret_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,18 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ConnStatus, ConnectionProfile, MqttMessage } from "./types";
-import { createNode, findNode, insertMessage, type TopicNode } from "./topicTree";
-import { loadProfiles, saveProfiles } from "./profiles";
+import { createNode, findNode, insertMessage, visibleRows, type TopicNode } from "./topicTree";
+import { loadProfiles, migratePlaintextPasswords, saveProfiles } from "./profiles";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { TopicTree } from "./components/TopicTree";
 import { TopicDetail } from "./components/TopicDetail";
-import { PublishPanel, type PublishDraft } from "./components/PublishPanel";
+import { PublishPanel, emptyDraft, publishRequest, type PublishDraft } from "./components/PublishPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { useUpdates } from "./updates";
 import "./styles.css";
 
 export default function App() {
-  const [profiles, setProfiles] = useState<ConnectionProfile[]>(loadProfiles);
+  const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // Profiles load after any 0.1-era plain-text passwords move to the keychain.
+  const [ready, setReady] = useState(false);
+  const [migrationError, setMigrationError] = useState<string>();
   const [active, setActive] = useState<ConnectionProfile | null>(null);
   const [status, setStatus] = useState<ConnStatus>({ state: "idle" });
   const [connectError, setConnectError] = useState<string>();
@@ -29,7 +32,32 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [rate, setRate] = useState(0);
   const [split, setSplit] = useState(48);
-  const [pub, setPub] = useState<PublishDraft>({ topic: "", payload: "", qos: 0, retain: false });
+  const [pub, setPub] = useState<PublishDraft>(emptyDraft);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const treeRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    migratePlaintextPasswords()
+      .then(setMigrationError)
+      .finally(() => {
+        setProfiles(loadProfiles());
+        setReady(true);
+      });
+  }, []);
+
+  // ⌘F / Ctrl+F: jump to the filter.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        filterRef.current?.focus();
+        filterRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
 
   const updateProfiles = (list: ConnectionProfile[]) => {
     setProfiles(list);
@@ -76,10 +104,19 @@ export default function App() {
           host: p.host,
           port: p.port,
           tls: p.tls,
+          tlsOptions: {
+            caFile: p.caFile || null,
+            clientCertFile: p.clientCertFile || null,
+            clientKeyFile: p.clientKeyFile || null,
+            insecure: p.tlsInsecure,
+          },
+          protocol: p.protocol,
           username: p.username || null,
           password: p.password || null,
           clientId: p.clientId || null,
-          subscriptions: p.subscriptions.map((s) => s.trim()).filter(Boolean),
+          subscriptions: p.subscriptions
+            .map((s) => ({ topic: s.topic.trim(), qos: s.qos }))
+            .filter((s) => s.topic),
         },
       });
     } catch (err) {
@@ -95,9 +132,13 @@ export default function App() {
     setStatus({ state: "idle" });
   };
 
-  const publish = useCallback(async (d: PublishDraft) => {
-    await invoke("mqtt_publish", { req: d });
-  }, []);
+  const mqtt5 = active?.protocol === 5;
+  const publish = useCallback(
+    async (d: PublishDraft) => {
+      await invoke("mqtt_publish", { req: publishRequest(d, mqtt5) });
+    },
+    [mqtt5],
+  );
 
   const toggle = (path: string) =>
     setExpanded((s) => {
@@ -147,9 +188,16 @@ export default function App() {
   };
 
   if (!active) {
+    if (!ready) return <div className="shell" />;
     return (
       <div className="shell">
         <UpdateBanner updates={updates} />
+        {migrationError && (
+          <div className="banner">
+            Saved passwords couldn't be moved to the system keychain, so they were removed. Enter them again. (
+            {migrationError})
+          </div>
+        )}
         <ConnectionForm
           profiles={profiles}
           onChange={updateProfiles}
@@ -170,6 +218,7 @@ export default function App() {
 
   const root = rootRef.current;
   const selectedNode = selected !== null ? findNode(root, selected) : undefined;
+  const rows = visibleRows(root, expanded, filter);
 
   return (
     <div className="app">
@@ -181,6 +230,7 @@ export default function App() {
             <div className="conn-name">{active.name}</div>
             <div className="muted small">
               {active.tls ? "mqtts" : "mqtt"}://{active.host}:{active.port}
+              {mqtt5 ? " · MQTT 5" : ""}
             </div>
           </div>
         </div>
@@ -200,9 +250,20 @@ export default function App() {
           type="search"
           autoComplete="off"
           spellCheck={false}
-          placeholder="Filter topics & values…"
+          placeholder="Filter topics & values… (⌘F)"
+          ref={filterRef}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setFilter("");
+              treeRef.current?.focus();
+            } else if (e.key === "ArrowDown" || e.key === "Enter") {
+              e.preventDefault();
+              if (rows[0] && !rows.some((r) => r.node.path === selected)) selectTopic(rows[0].node.path);
+              treeRef.current?.focus();
+            }
+          }}
         />
         <div className="row tight">
           <button
@@ -241,12 +302,13 @@ export default function App() {
           </div>
           <div className="scroll">
             <TopicTree
-              root={root}
-              expanded={expanded}
-              onToggle={toggle}
+              ref={treeRef}
+              rows={rows}
+              empty={root.children.size === 0}
+              filter={filter}
               selected={selected}
               onSelect={selectTopic}
-              filter={filter}
+              onToggle={toggle}
             />
           </div>
         </section>
@@ -256,8 +318,20 @@ export default function App() {
             {selectedNode ? (
               <TopicDetail
                 node={selectedNode}
-                onClearRetained={(t) => publish({ topic: t, payload: "", qos: 0, retain: true })}
-                onUseInPublish={(topic, payload) => setPub((d) => ({ ...d, topic, payload }))}
+                onClearRetained={(t) => publish({ ...emptyDraft, topic: t, retain: true })}
+                onUseInPublish={(m) =>
+                  setPub((d) => ({
+                    ...d,
+                    topic: m.topic,
+                    payload: m.payload,
+                    qos: m.qos,
+                    retain: m.retain,
+                    contentType: m.properties?.contentType ?? "",
+                    responseTopic: m.properties?.responseTopic ?? "",
+                    messageExpiry: "",
+                    userProperties: (m.properties?.userProperties ?? []).map(([k, v]) => `${k}=${v}`).join("\n"),
+                  }))
+                }
               />
             ) : (
               <div className="empty muted">Select a topic to see its value and history.</div>
@@ -268,6 +342,7 @@ export default function App() {
             onChange={setPub}
             onPublish={publish}
             disabled={status.state !== "connected"}
+            mqtt5={mqtt5}
           />
         </section>
       </main>

@@ -67,7 +67,8 @@ export function insertMessage(root: TopicNode, msg: MqttMessage): void {
 }
 
 export function findNode(root: TopicNode, path: string): TopicNode | undefined {
-  if (path === "") return root;
+  // A topic like "/foo" has an empty first level whose path is also "".
+  if (path === "") return root.children.get("") ?? root;
   let node: TopicNode | undefined = root;
   for (const part of path.split("/")) {
     node = node.children.get(part);
@@ -101,3 +102,39 @@ export function matchesFilter(node: TopicNode, q: string, cache: Map<TopicNode, 
   cache.set(node, hit);
   return hit;
 }
+
+/** The latest message of every topic in this subtree, in tree order. */
+export function collectLatest(node: TopicNode, out: MqttMessage[] = []): MqttMessage[] {
+  if (node.message) out.push(node.message);
+  for (const c of sortedChildren(node)) collectLatest(c, out);
+  return out;
+}
+
+export interface VisibleRow {
+  node: TopicNode;
+  depth: number;
+  hasChildren: boolean;
+  open: boolean;
+}
+
+/**
+ * The rows the tree currently shows, top to bottom. While filtering, every
+ * branch with a match is open so matches are visible.
+ */
+export function visibleRows(root: TopicNode, expanded: Set<string>, filter: string): VisibleRow[] {
+  const q = filter.trim().toLowerCase();
+  const cache = new Map<TopicNode, boolean>();
+  const rows: VisibleRow[] = [];
+  const walk = (n: TopicNode, depth: number) => {
+    for (const c of sortedChildren(n)) {
+      if (q && !matchesFilter(c, q, cache)) continue;
+      const hasChildren = c.children.size > 0;
+      const open = hasChildren && (q ? true : expanded.has(c.path));
+      rows.push({ node: c, depth, hasChildren, open });
+      if (open) walk(c, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return rows;
+}
+

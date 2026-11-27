@@ -5,12 +5,18 @@ It's built with [Tauri 2](https://tauri.app): a Rust MQTT client ([rumqttc](http
 
 ## Features
 
-- Saved connection profiles (host, port, TLS, username/password, client ID, subscriptions)
+- Saved connection profiles; remembered passwords are kept in the system keychain (macOS Keychain, or GNOME Keyring / KWallet on Linux)
+- MQTT 3.1.1 and MQTT 5, including MQTT 5 message properties (content type, response topic, correlation data, user properties, expiry)
+- TLS with the system's trusted certificates, your own CA certificate (for self-signed brokers), client certificates, or no verification at all
+- QoS 0, 1 or 2 per subscription
 - Live topic tree with per-branch topic and message counts, value previews, and a flash when a topic updates
 - Filters topics and payloads as you type
 - Topic detail: pretty-printed and highlighted JSON, hex view for binary payloads, QoS, retained flag, size, and the last 100 messages
-- A chart for topics whose values are numeric
-- Publish with QoS and retain, plus "edit & republish" and "clear retained"
+- Compare any two messages on a topic: field-by-field for JSON, line-by-line for text
+- Charts for numeric topics and for any numeric field inside JSON payloads (e.g. `temperature` from a zigbee2mqtt sensor)
+- Copy a topic, value or whole message, and export a topic's history (JSON or CSV) or the latest values of a whole subtree
+- Keyboard: ⌘F / Ctrl+F filters, arrow keys move through the tree (→ opens, ← closes or goes up), Escape clears the filter
+- Publish with QoS, retain and MQTT 5 properties, plus "edit & republish" and "clear retained"
 - Pause the display, clear the tree, and see messages per second
 - Handles busy brokers: messages go to the UI in 100 ms batches, and payloads can be up to 16 MB
 
@@ -118,14 +124,17 @@ npm run tauri build -- --target universal-apple-darwin
 cd src-tauri
 cargo run --example smoke -- test.mosquitto.org 1883          # plain
 cargo run --example smoke -- test.mosquitto.org 8886 tls      # TLS
+cargo run --example smoke -- test.mosquitto.org 1883 --v5     # MQTT 5
+cargo run --example smoke -- broker.lan 8883 --ca ca.pem --cert client.pem --key client.key
 cargo run --example burst -- <host> some/topic 500 1          # publish 500 numbered msgs at QoS 1
 ```
 
 ## Notes
 
-- Subscriptions use QoS 0. On a very busy broker, the broker itself may drop messages if the client can't keep up with the bandwidth. Narrow the subscriptions (for example `zigbee2mqtt/#` instead of `#`) to see everything.
-- If you choose "Remember password", the password is stored unencrypted in the app's local storage.
-- TLS uses the OS trust store. Client certificates and self-signed CAs aren't supported yet.
+- On a very busy broker, QoS 0 subscriptions can lose messages when the client can't keep up. Use QoS 1 for the topics you care about, or narrow the subscriptions (for example `zigbee2mqtt/#` instead of `#`).
+- "Remember password" saves the password in the system keychain. On macOS, the first time a new version of Tidepool reads it, macOS asks for permission; choose **Always Allow**. On Linux it needs a Secret Service provider (GNOME Keyring or KWallet), which Mint, Ubuntu and Fedora desktops include.
+- Versions before 0.2 stored remembered passwords in plain text. Tidepool 0.2 moves them into the keychain on first launch and removes the plain-text copies.
+- Certificate and key files must be PEM. "Don't verify the server certificate" still encrypts the connection but can't detect an impostor broker, so prefer adding the broker's CA certificate.
 
 ## License
 
