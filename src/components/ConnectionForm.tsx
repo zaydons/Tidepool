@@ -1,6 +1,7 @@
-import { useState } from "react";
-import type { ConnectionProfile } from "../types";
-import { newProfile } from "../profiles";
+import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { ConnectionProfile, Subscription } from "../types";
+import { deleteSecret, getSecret, newProfile, rememberSecret } from "../profiles";
 
 interface Props {
   profiles: ConnectionProfile[];
@@ -15,8 +16,28 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
   const [draft, setDraft] = useState<ConnectionProfile>(
     () => profiles.find((p) => p.id === selectedId) ?? newProfile(),
   );
+  const [keychainError, setKeychainError] = useState<string>();
+
+  // Fill in the saved password from the keychain when a profile is opened.
+  const draftId = draft.id;
+  const wantsSecret = draft.rememberPassword && !draft.password;
+  useEffect(() => {
+    if (!wantsSecret) return;
+    let cancelled = false;
+    getSecret(draftId)
+      .then((pw) => {
+        if (!cancelled && pw) setDraft((d) => (d.id === draftId && !d.password ? { ...d, password: pw } : d));
+      })
+      .catch((e) => !cancelled && setKeychainError(String(e)));
+    return () => {
+      cancelled = true;
+    };
+    // Only when switching profiles, not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftId]);
 
   const select = (p: ConnectionProfile) => {
+    setKeychainError(undefined);
     setSelectedId(p.id);
     setDraft(p);
   };
@@ -24,32 +45,54 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
   const set = <K extends keyof ConnectionProfile>(k: K, v: ConnectionProfile[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
-  const persist = (p: ConnectionProfile) => {
+  const persist = async (p: ConnectionProfile) => {
     const exists = profiles.some((x) => x.id === p.id);
     onChange(exists ? profiles.map((x) => (x.id === p.id ? p : x)) : [...profiles, p]);
     setSelectedId(p.id);
+    try {
+      await rememberSecret(p);
+      setKeychainError(undefined);
+    } catch (e) {
+      setKeychainError(String(e));
+    }
   };
 
   const remove = () => {
     const next = profiles.filter((x) => x.id !== draft.id);
     onChange(next);
+    deleteSecret(draft.id).catch(() => {});
     const first = next[0] ?? newProfile();
-    setSelectedId(first.id);
-    setDraft(first);
+    select(first);
   };
 
-  const addNew = () => {
-    const p = newProfile();
-    setSelectedId(p.id);
-    setDraft(p);
-  };
+  const addNew = () => select(newProfile());
 
-  const connect = (e: React.FormEvent) => {
+  const connect = async (e: React.FormEvent) => {
     e.preventDefault();
-    const p = { ...draft, name: draft.name.trim() || draft.host };
-    persist(p);
+    const p = {
+      ...draft,
+      name: draft.name.trim() || draft.host,
+      subscriptions: draft.subscriptions.filter((s) => s.topic.trim()),
+    };
+    await persist(p);
     onConnect(p);
   };
+
+  const pickFile = async (k: "caFile" | "clientCertFile" | "clientKeyFile", title: string) => {
+    const path = await open({
+      title,
+      multiple: false,
+      directory: false,
+      filters: [{ name: "PEM files", extensions: ["pem", "crt", "cer", "key"] }, { name: "All files", extensions: ["*"] }],
+    });
+    if (typeof path === "string") set(k, path);
+  };
+
+  const setSub = (i: number, s: Partial<Subscription>) =>
+    set(
+      "subscriptions",
+      draft.subscriptions.map((x, j) => (j === i ? { ...x, ...s } : x)),
+    );
 
   return (
     <div className="connect-screen">
@@ -70,6 +113,7 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
             <span className="profile-name">{p.name}</span>
             <span className="muted small">
               {p.tls ? "mqtts" : "mqtt"}://{p.host}:{p.port}
+              {p.protocol === 5 ? " · v5" : ""}
             </span>
           </button>
         ))}
@@ -106,6 +150,13 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
               onChange={(e) => set("port", Number(e.target.value))}
             />
           </label>
+          <label style={{ width: 130 }}>
+            Protocol
+            <select value={draft.protocol} onChange={(e) => set("protocol", Number(e.target.value) as 4 | 5)}>
+              <option value={4}>MQTT 3.1.1</option>
+              <option value={5}>MQTT 5</option>
+            </select>
+          </label>
         </div>
 
         <label className="check">
@@ -121,8 +172,48 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
               }));
             }}
           />
-          Use TLS (system trusted certificates)
+          Use TLS
         </label>
+
+        {draft.tls && (
+          <fieldset className="tls-options">
+            <FileField
+              label="CA certificate"
+              hint="trusted in addition to the system's certificates"
+              value={draft.caFile}
+              disabled={draft.tlsInsecure}
+              onChange={(v) => set("caFile", v)}
+              onBrowse={() => pickFile("caFile", "Choose the broker's CA certificate")}
+            />
+            <FileField
+              label="Client certificate"
+              hint="only if the broker requires one"
+              value={draft.clientCertFile}
+              onChange={(v) => set("clientCertFile", v)}
+              onBrowse={() => pickFile("clientCertFile", "Choose your client certificate")}
+            />
+            <FileField
+              label="Client key"
+              value={draft.clientKeyFile}
+              onChange={(v) => set("clientKeyFile", v)}
+              onBrowse={() => pickFile("clientKeyFile", "Choose your client private key")}
+            />
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={draft.tlsInsecure}
+                onChange={(e) => set("tlsInsecure", e.target.checked)}
+              />
+              Don't verify the server certificate
+            </label>
+            {draft.tlsInsecure && (
+              <p className="warn-text small">
+                Traffic is still encrypted, but Tidepool can't tell whether it's talking to your broker or an
+                impostor. Use a CA certificate instead when you can.
+              </p>
+            )}
+          </fieldset>
+        )}
 
         <div className="row">
           <label className="grow">
@@ -149,22 +240,63 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
             checked={draft.rememberPassword}
             onChange={(e) => set("rememberPassword", e.target.checked)}
           />
-          Remember password <span className="muted small">(stored unencrypted on this computer)</span>
+          Remember password <span className="muted small">(saved in the system keychain)</span>
         </label>
+        {keychainError && <div className="error-box">{keychainError}</div>}
 
         <label>
           Client ID <span className="muted small">(blank = random)</span>
           <input value={draft.clientId} onChange={(e) => set("clientId", e.target.value)} />
         </label>
 
-        <label>
-          Subscriptions <span className="muted small">(one per line)</span>
-          <textarea
-            rows={3}
-            value={draft.subscriptions.join("\n")}
-            onChange={(e) => set("subscriptions", e.target.value.split("\n"))}
-          />
-        </label>
+        <div className="field">
+          <span className="field-label">
+            Subscriptions{" "}
+            <span className="muted small">(QoS 1 or 2 asks the broker not to drop messages to Tidepool)</span>
+          </span>
+          {draft.subscriptions.map((s, i) => (
+            <div className="row tight" key={i}>
+              <input
+                className="grow mono"
+                placeholder="topic/# or sensors/+/temperature"
+                value={s.topic}
+                onChange={(e) => setSub(i, { topic: e.target.value })}
+              />
+              <select
+                value={s.qos}
+                onChange={(e) => setSub(i, { qos: Number(e.target.value) })}
+                aria-label="QoS"
+                title="QoS"
+              >
+                <option value={0}>QoS 0</option>
+                <option value={1}>QoS 1</option>
+                <option value={2}>QoS 2</option>
+              </select>
+              <button
+                type="button"
+                className="ghost small"
+                title="Remove subscription"
+                onClick={() =>
+                  set(
+                    "subscriptions",
+                    draft.subscriptions.filter((_, j) => j !== i),
+                  )
+                }
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <div>
+            <button
+              type="button"
+              className="small"
+              onClick={() => set("subscriptions", [...draft.subscriptions, { topic: "", qos: 0 }])}
+            >
+              Add subscription
+            </button>
+          </div>
+        </div>
 
         {error && <div className="error-box">{error}</div>}
 
@@ -183,5 +315,41 @@ export function ConnectionForm({ profiles, onChange, onConnect, error, footer }:
         </div>
       </form>
     </div>
+  );
+}
+
+interface FileFieldProps {
+  label: string;
+  hint?: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (v: string) => void;
+  onBrowse: () => void;
+}
+
+function FileField({ label, hint, value, disabled, onChange, onBrowse }: FileFieldProps) {
+  return (
+    <label>
+      <span>
+        {label} {hint && <span className="muted small">({hint})</span>}
+      </span>
+      <div className="row tight">
+        <input
+          className="grow mono"
+          placeholder="Path to a .pem file"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button type="button" className="small" onClick={onBrowse} disabled={disabled}>
+          Browse…
+        </button>
+        {value && (
+          <button type="button" className="ghost small" title="Clear" onClick={() => onChange("")} disabled={disabled}>
+            ✕
+          </button>
+        )}
+      </div>
+    </label>
   );
 }
